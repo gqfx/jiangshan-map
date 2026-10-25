@@ -7,7 +7,8 @@ scale bar also read the SVG rectangle after writes that invalidated layout.
 
 The map still renders through its SVG `viewBox`. This change:
 
-- Uses local font stacks within the map, while retaining the web fonts in the UI.
+- Uses consolidated, self-hosted WOFF2 fonts for the map and UI. See the bundled
+  font follow-up below for the current delivery method and measurements.
 - Coalesces wheel, pan and pinch rendering into one animation frame, preserving
   every input's camera coordinates and flushing pending movement on pointer end/cancel.
 - Defers zoom-only label sizing and collision layout until 120 ms without camera
@@ -16,9 +17,11 @@ The map still renders through its SVG `viewBox`. This change:
 - Reuses the viewport rectangle during motion, invalidates it on resize, avoids
   unchanged scale-bar writes, and suspends hover hit-testing during gestures.
 
-## Measured comparison
+## Initial camera optimization comparison
 
 Measured 2026-10-24 against `ff6c91ec94d89525ee9d94cd4f653e57f4f47ae2`.
+This historical comparison used system fonts in the optimized map. The bundled
+font follow-up below measures the current version separately.
 
 | Environment | Value |
 | --- | --- |
@@ -56,6 +59,34 @@ layout, restored outlines, and reported no additional long tasks. This is not a
 claim that every interaction or device will reach 60 FPS. Other operating systems,
 fallback fonts and browsers have not been performance-tested.
 
+## Bundled font follow-up
+
+Measured 2026-10-25 against current main
+`cfe1349b63371bd7b2479c7f60d680aebc06e2c4`, using its updated data in both variants.
+Hardware, OS, browser, viewport and workload match the table above. The baseline
+uses system fonts in the map and remote Noto fonts in the UI; the candidate uses
+the bundled WOFF2 faces throughout. Each run waits for fonts and the year-1415
+deep link to finish loading. The browser is headless and no CPU/network throttling
+is applied.
+
+| Metric | Current main (system map fonts) | Bundled fonts |
+| --- | ---: | ---: |
+| Animation FPS, run 1 | 60.0 | 56.3 |
+| Animation FPS, run 2 | 60.0 | 56.4 |
+| Animation FPS, run 3 | 60.0 | 56.4 |
+| Median animation FPS | **60.0** | **56.4** |
+| Frame interval p95, each run | 16.8 / 16.8 / 16.8 ms | 33.3 / 33.3 / 33.3 ms |
+| Long tasks during sweep, each run | 0 / 0 / 0 | 0 / 0 / 0 |
+| Deferred label-layout calls after sweep | 1 / 1 / 1 | 1 / 1 / 1 |
+
+Bundled fonts trade about 6% of median animation throughput in this environment
+for consistent typefaces without system-font or Google Fonts availability. They
+do not reproduce the original severe layout slowdown. Both variants restore
+label outlines and current typography; the candidate settle check takes 133–137
+ms after the sweep, with no additional long tasks. These are rAF cadence results,
+not physical display FPS or a cold-load/network benchmark. The benchmark's JSON
+output includes raw frame intervals and bundled font hashes for reproducibility.
+
 ## Reproduce
 
 The application retains zero runtime/npm dependencies. These optional developer
@@ -74,7 +105,7 @@ node scripts/validate_atlas.js
 PLAYWRIGHT_PATH=/tmp/jiangshan-perf-tools/node_modules/playwright \
   node scripts/validate_camera.cjs
 PLAYWRIGHT_PATH=/tmp/jiangshan-perf-tools/node_modules/playwright \
-  CAMERA_BASE_REF=ff6c91ec94d89525ee9d94cd4f653e57f4f47ae2 \
+  CAMERA_BASE_REF=cfe1349b63371bd7b2479c7f60d680aebc06e2c4 \
   CAMERA_OUTPUT=/tmp/camera-benchmark.json \
   node scripts/benchmark_camera.cjs
 ```
@@ -86,16 +117,25 @@ Run benchmarks without other CPU-heavy jobs. The baseline script serves the chos
 revision's HTML, CSS and controller alongside the checkout's unchanged data files;
 use a matching data revision if comparing unrelated changes.
 
-The atlas validator passes all 36 CUJs, 169 snapshots and 2,430 timeline years.
+The current atlas validator passes all 37 CUJs, 173 snapshots and 2,430 timeline
+years, plus font hashes, CJK character coverage and required calligraphy titles.
 Browser checks cover wheel anchoring/batching, final pointer movement on end/cancel,
 hover suppression and recovery, resize invalidation, snapshot/language changes,
 reset, city coordinate targeting, and mobile touch pinch/person labels. Browser
-mobile emulation is not a physical-device performance test.
+mobile emulation is not a physical-device performance test. External hosts are
+blocked in the browser checks; Chrome's actual glyph-font report must identify
+map labels and the masthead as custom fonts, preventing silent system fallback.
 
 ## Visual tradeoffs
 
-Map glyph shapes depend on installed fonts (Songti/PingFang/Kaiti on macOS;
-SimSun/Microsoft YaHei/KaiTi on Windows, then generic fallbacks). During motion,
-labels scale with the map and temporarily lose their outlines; their usual sizing,
-visibility/collision decisions and outlines return after settling. This preserves
-the static map's styling while accepting a brief difference during interaction.
+Map glyphs now come from bundled Noto Serif SC/Noto Sans SC, with Ma Shan Zheng
+for calligraphic headings. Three WOFF2 subsets total 5,298,656 bytes (5.05 MiB),
+adding a first-download cost. Content-hashed filenames support ordinary HTTP
+caching. Generic CSS fallbacks remain available while fonts load or for missing
+glyphs. Sources, licenses and regeneration instructions are in the
+[font guide](../assets/fonts/README.md).
+
+During zoom, labels scale with the map and temporarily lose their outlines;
+their usual sizing, visibility/collision decisions and outlines return after
+settling. Other browsers, operating systems and physical mobile devices have not
+been performance-tested.

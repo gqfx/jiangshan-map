@@ -16,11 +16,16 @@ async function load(page, query = '?year=1415') {
   page.on('pageerror', e => errors.push(e.message));
   await page.route('**/*', route => {
     const host = new URL(route.request().url()).hostname;
-    return [new URL(baseUrl).hostname, 'fonts.googleapis.com', 'fonts.gstatic.com'].includes(host)
+    return host === new URL(baseUrl).hostname
       ? route.continue() : route.abort();
   });
   await page.goto(baseUrl + query, { waitUntil: 'load' });
   await page.waitForFunction(() => window.atlasApp?._fullSnapshotsLoaded);
+  // Deep links run after a short deferred callback. Local fonts can finish
+  // loading before that callback, so wait for the requested scene explicitly.
+  const params = new URLSearchParams(query);
+  if (params.has('year')) await page.waitForFunction(year => atlasApp.year === year, Number(params.get('year')));
+  if (params.has('person')) await page.waitForFunction(() => atlasApp.activePerson && document.querySelector('.journey-node'));
   await page.evaluate(() => document.fonts.ready);
   await settled(page);
 }
@@ -45,8 +50,25 @@ async function load(page, query = '?year=1415') {
         uiFont: getComputedStyle(document.querySelector('#nav-bar')).fontFamily,
       };
     });
-    assert(!initial.mapFont.includes('Noto'), 'SVG labels must not resolve to the remote Noto font');
-    assert(initial.uiFont.includes('Noto'), 'UI font stack must remain unchanged');
+    assert(initial.mapFont.includes('Atlas Serif'), 'SVG labels must use the bundled serif font');
+    assert(initial.uiFont.includes('Atlas Sans'), 'UI must use the bundled sans font');
+    const loadedFonts = await page.evaluate(() => [...document.fonts]
+      .filter(font => font.status === 'loaded').map(font => font.family.replaceAll('"', '')));
+    for (const font of ['Atlas Serif', 'Atlas Sans', 'Atlas Calligraphy']) {
+      assert(loadedFonts.includes(font), `${font} must load with external hosts blocked`);
+    }
+    assert.equal(await page.locator('link[href*="fonts.googleapis.com"], link[href*="fonts.gstatic.com"]').count(), 0);
+    // Check the fonts actually used for glyphs, not only CSS family declarations.
+    const fontSession = await context.newCDPSession(page);
+    await fontSession.send('DOM.enable');
+    await fontSession.send('CSS.enable');
+    const { root } = await fontSession.send('DOM.getDocument');
+    for (const selector of ['.polity-caption', '.settlement-node .name', '.seal-mark']) {
+      const { nodeId } = await fontSession.send('DOM.querySelector', { nodeId: root.nodeId, selector });
+      const { fonts } = await fontSession.send('CSS.getPlatformFontsForNode', { nodeId });
+      assert(fonts.length && fonts.every(font => font.isCustomFont), `${selector} fell back to a system font`);
+    }
+    await fontSession.detach();
 
     // Many wheel events in one task must preserve the cursor anchor and render once.
     const burst = await page.evaluate(() => {
@@ -168,7 +190,8 @@ async function load(page, query = '?year=1415') {
     for (const d of [45, 55, 65]) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(d) });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await settled(mp);
-    assert(await mp.evaluate(() => atlasApp.camera.w) < beforePinch, 'Pinch did not zoom');
+    const afterPinch = await mp.evaluate(() => ({ width: atlasApp.camera.w, pointers: atlasApp.activePointers.size }));
+    assert(afterPinch.width < beforePinch, `Pinch did not zoom: ${JSON.stringify({ beforePinch, afterPinch, mb, mx, my })}`);
     assert.equal(await mp.evaluate(() => atlasApp.activePointers.size), 0);
     assert(await mp.evaluate(() => atlasApp.camera.w === atlasApp._lastTypographyWidth));
     assert(await mp.locator('.journey-node').count() > 0);
@@ -181,4 +204,4 @@ async function load(page, query = '?year=1415') {
     assert.deepEqual(errors, [], 'Browser errors');
     console.log('Camera browser checks passed: wheel anchor/batching, settle/halos, pointerup/cancel, hover, resize, snapshot/languages, reset/city hit, mobile pinch/person pins.');
   } finally { await browser.close(); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => { console.error(error); if (errors.length) console.error(errors); process.exitCode = 1; });

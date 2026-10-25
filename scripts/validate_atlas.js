@@ -3465,11 +3465,30 @@ function main() {
       assert(refCorpus.includes(assetFile), `Unreferenced file in assets/: ${assetFile}`);
     }
 
-    const maShanLinkMatch = indexHtml.match(
-      /<link href="(https:\/\/fonts\.googleapis\.com\/css2\?family=Ma\+Shan\+Zheng&text=([^"&]+)&display=swap)" rel="stylesheet" \/>/
-    );
-    assert(maShanLinkMatch, 'Expected synchronous subsetted Ma Shan Zheng stylesheet <link> in index.html');
-    const subsetChars = new Set(decodeURIComponent(maShanLinkMatch[2]));
+    assert(indexHtml.includes('assets/fonts/fonts.css?v='), 'Expected self-hosted font stylesheet');
+    assert(!/fonts\.(googleapis|gstatic)\.com/.test(indexHtml), 'Fonts must not depend on Google Fonts requests');
+    const fontDir = path.join(ROOT, 'assets', 'fonts');
+    const fontManifest = JSON.parse(fs.readFileSync(path.join(fontDir, 'manifest.json'), 'utf8'));
+    const fontCss = fs.readFileSync(path.join(fontDir, 'fonts.css'), 'utf8');
+    const fontCorpus = [indexHtml, ...fs.readdirSync(path.join(ROOT, 'js'))
+      .filter(file => file.endsWith('.js'))
+      .map(file => fs.readFileSync(path.join(ROOT, 'js', file), 'utf8'))].join('\n');
+    const hanChars = new Set(fontCorpus.match(/[\u3400-\u9fff\u{20000}-\u{3134f}]/gu));
+    for (const family of ['Atlas Serif', 'Atlas Sans', 'Atlas Calligraphy']) {
+      const font = fontManifest.fonts.find(entry => entry.family === family);
+      assert(font && /^[a-z]+-[a-f0-9]{12}\.woff2$/.test(font.file), `Missing bundled font: ${family}`);
+      const bytes = fs.readFileSync(path.join(fontDir, font.file));
+      assert.strictEqual(bytes.toString('ascii', 0, 4), 'wOF2', `Invalid WOFF2: ${font.file}`);
+      assert.strictEqual(require('crypto').createHash('sha256').update(bytes).digest('hex'), font.sha256);
+      assert(fontCss.includes(font.file) && fontCss.includes(family), `Font CSS missing ${family}`);
+      if (family !== 'Atlas Calligraphy') {
+        const coverage = new Set(font.characters);
+        for (const ch of hanChars) {
+          assert(coverage.has(ch), `${family} missing glyph "${ch}"; rebuild with scripts/build_fonts.py`);
+        }
+      }
+    }
+    const subsetChars = new Set(fontManifest.fonts.find(font => font.family === 'Atlas Calligraphy').characters);
     const requiredCalligraphyChars = [
       '江山时序',
       ...dynasties.map((d) => d.title || ''),

@@ -25,6 +25,8 @@ const percentile = (values, q) => [...values].sort((a, b) => a - b)[Math.min(val
       duration, repetitions, baseCommit: git('rev-parse', baseRef).trim(),
       candidateCommit: git('rev-parse', 'HEAD').trim(),
       candidateDiff: git('diff', 'HEAD', '--', 'js/app.js', 'css/style.css', 'index.html'),
+      candidateFonts: JSON.parse(fs.readFileSync(path.join(root, 'assets/fonts/manifest.json'), 'utf8'))
+        .fonts.map(({ family, file, sha256, sourceSha256 }) => ({ family, file, sha256, sourceSha256 })),
     },
     runs: [],
   };
@@ -50,6 +52,7 @@ const percentile = (values, q) => [...values].sort((a, b) => a - b)[Math.min(val
         });
         await page.goto(url + '?year=1415', { waitUntil: 'load' });
         await page.waitForFunction(() => window.atlasApp?._fullSnapshotsLoaded);
+        await page.waitForFunction(() => atlasApp.year === 1415 && !atlasApp.flyRaf);
         await page.evaluate(() => document.fonts.ready);
         await page.waitForTimeout(600);
         const fonts = await page.evaluate(() => ({
@@ -58,7 +61,11 @@ const percentile = (values, q) => [...values].sort((a, b) => a - b)[Math.min(val
           }, {}),
           map: getComputedStyle(document.querySelector('.polity-caption')).fontFamily,
         }));
-        if (!Object.keys(fonts.faces).some(key => key.includes('Noto Serif SC:loaded'))) throw new Error('Google Fonts did not load; comparison would use fallback fonts');
+        const bundledFonts = variant === 'candidate' || baseline['css/style.css'].includes("'Atlas Serif'");
+        const expectedFont = bundledFonts ? 'Atlas Serif' : 'Noto Serif SC';
+        if (!Object.keys(fonts.faces).some(key => key.replaceAll('"', '').includes(`${expectedFont}:loaded`))) {
+          throw new Error(`${expectedFont} did not load; comparison would use fallback fonts`);
+        }
         await page.evaluate(() => {
           atlasApp.closeMilestoneBalloon();
           window.cameraTypographyCalls = 0;

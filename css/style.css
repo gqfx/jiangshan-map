@@ -12,9 +12,9 @@
   --hairline: rgba(43, 38, 34, 0.12);
   --card-shadow: 0 10px 30px rgba(43, 38, 34, 0.14), 0 1px 2px rgba(43, 38, 34, 0.08);
   --corner-radius: 14px;
-  --serif-stack: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
-  --sans-stack: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --calligraphy-stack: 'Ma Shan Zheng', 'STKaiti', 'KaiTi', var(--serif-stack);
+  --serif-stack: 'Atlas Serif', serif;
+  --sans-stack: 'Atlas Sans', sans-serif;
+  --calligraphy-stack: 'Atlas Calligraphy', var(--serif-stack);
   --dynasty-accent: #3a3733;
 }
 
@@ -384,11 +384,7 @@ h2 {
 }
 
 #atlas-svg {
-  /* Keep map glyphs on local fonts: resizing SVG text backed by the segmented
-     CJK web fonts is expensive in Chrome. UI/chronicle fonts stay unchanged. */
-  --serif-stack: 'Songti SC', 'SimSun', serif;
-  --sans-stack: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --calligraphy-stack: 'STKaiti', 'KaiTi', var(--serif-stack);
+  /* Use the bundled, consolidated WOFF2 faces rather than segmented web fonts. */
   font-family: var(--serif-stack);
   width: 100%;
   height: 100%;
